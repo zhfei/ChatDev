@@ -41,7 +41,20 @@ for name in BASE_URL API_KEY MAC_ALLOW_UNSAFE_CODE_EXECUTION SERPER_DEV_API_KEY 
   printf "%s='%s'\n" "$name" "$value" >> "$release/.env"
 done
 echo '2/3 Building and packaging image locally...'
-bash deploy/build.sh "$version" "$release"
+if bash deploy/build.sh "$version" "$release"; then
+  :
+else
+  status=$?
+  echo 'Build failed; upload and deployment cancelled.' >&2
+  exit "$status"
+fi
+# Check artifacts as well as exit status: an incomplete package must never
+# open another SSH connection or overwrite the deployed files.
+for artifact in images.tar.gz VERSION compose.yaml deploy.sh; do
+  [[ -s "$release/$artifact" ]] || { echo "Build output missing: $artifact; deployment cancelled." >&2; exit 1; }
+done
+[[ "$(cat "$release/VERSION")" == "$version" ]] || { echo 'Build version mismatch; deployment cancelled.' >&2; exit 1; }
+gzip -t "$release/images.tar.gz" || { echo 'Invalid image archive; deployment cancelled.' >&2; exit 1; }
 echo '3/3 Uploading over SSH and deploying...'
 # Extract in a private staging directory; incomplete transfers do not overwrite config.
 tar -C "$release" -cf - images.tar.gz VERSION compose.yaml deploy.sh .env |
