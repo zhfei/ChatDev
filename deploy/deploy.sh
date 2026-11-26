@@ -25,5 +25,4 @@ printf 'CHATDEV_VERSION=%s\n' "$version" > version.env
 docker compose --env-file version.env config --quiet
 docker compose --env-file version.env up -d --remove-orphans --wait --wait-timeout 180
 docker compose --env-file version.env exec -T app python -c "import urllib.request,json; r=json.load(urllib.request.urlopen('http://127.0.0.1:8080/api/workflows')); assert isinstance(r['workflows'],list); print('Workflow API proxy OK')"
-echo 'Deployed. Open an SSH tunnel from your computer: ssh -N -L 8080:127.0.0.1:8080 USER@120.26.22.130'
-echo 'Then open http://localhost:8080 on your computer.'
+echo 'Deployment health checks passed.'

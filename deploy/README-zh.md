@@ -2,6 +2,44 @@
 
 适用：文档所列的杭州 VPS（120.26.22.130，2 核 / 2 GiB，预计 x86_64，部署脚本会核对架构）。运行一个容器：同一镜像包含 Python 后端、编译后的前端页面、Nginx 和轻量进程管理器 Supervisor。Supervisor 负责启动两个进程、退出时清理进程组，并在子进程异常退出后重启。复用应用的本地 SQLite，不增加数据库、Redis 或管理面板。模型调用外部 API，先每次运行一个轻量工作流；本地模型、Blender 等重型任务不在默认部署范围。
 
+## 推荐：一个命令完成打包、上传、部署
+
+首次在仓库根目录复制配置，填写模型与 SSH 信息：
+
+```bash
+cp .env.example .env
+```
+
+编辑本地 `.env`：
+
+```bash
+BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+API_KEY='你的模型密钥'
+DEPLOY_HOST=120.26.22.130
+DEPLOY_USER=root
+DEPLOY_PORT=22
+DEPLOY_PATH=/opt/chatdev
+DEPLOY_SSH_KEY=~/.ssh/id_ed25519
+```
+
+`DEPLOY_SSH_KEY` 是本地私钥的路径；使用 SSH agent 或已有 SSH 配置时可留空。私钥内容和 SSH 密码不写入 `.env`。SSH 需要密码或私钥口令时会正常询问；首次连接需核对主机指纹。`.env` 由 Bash 加载，请用单引号包裹含 `$`、`#` 或空格的值，不要提交该文件。
+
+以后每次发布只执行：
+
+```bash
+bash deploy/publish.sh
+```
+
+脚本自动检查 VPS → 本地构建单镜像 → 打包 → SSH 上传 → 更新配置 → 启动单容器 → 等待健康检查。默认生成“时间戳 + Git 提交号”版本，无需手工改版本号或使用镜像仓库。构建后上传整个镜像包（目前约 621 MiB），耗时取决于本地构建和上行带宽。
+
+每次发布以本地 `.env` 中的应用配置更新远端 `.env`，仅转发脚本列出的模型、搜索与执行开关变量；SSH 配置不上传。密钥不进入镜像，通过加密 SSH 连接传输，在远端以 `600` 权限保存。镜像和配置先上传到临时目录，传输完整后才替换部署文件。运行失败会直接报错；不会自动删除数据卷或回滚数据。
+
+一次性前提：本机安装 Docker、Bash、Git、SSH、tar、gzip；目标 VPS 已有 Docker 与支持 `up --wait` 的 Compose v2，SSH 用户能操作 Docker并写入部署目录。脚本不修改服务器现有 Docker 安装。无须本地安装 Python 或 Node。ARM Mac 需 Docker 支持 linux/amd64 构建。
+
+发布成功会输出带实际账号的 SSH 隧道命令，保持隧道运行后浏览器访问 `http://localhost:8080`。应用继续只监听 VPS 本机地址，不需要开放公网应用端口。
+
+以下保留分步骤操作，便于排查或手动发布。
+
 ## 第一次准备
 
 1. 在服务器控制台确认 Docker 可用，安装 Docker Compose v2 插件。验证 `docker info`、`docker compose version`，Compose 需要支持 `up --wait`。确认磁盘有足够空间容纳镜像包与解压后的镜像（当前发布包约 621 MiB，镜像约 1 GiB，建议至少预留 4 GiB）。不要直接在这台 2 GiB VPS 上构建 Python 依赖。
