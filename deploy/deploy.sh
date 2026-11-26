@@ -16,6 +16,7 @@ if [[ ! -f .env ]]; then
 fi
 version=$(cat VERSION)
 [[ "$version" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || exit 1
+echo 'Loading image into Docker (this may take several minutes)...'
 docker load -i images.tar.gz
 # Keep previous version metadata for a manual rollback. Never delete volumes.
 if [[ -f version.env ]] && ! grep -qxF "CHATDEV_VERSION=$version" version.env; then
@@ -23,6 +24,7 @@ if [[ -f version.env ]] && ! grep -qxF "CHATDEV_VERSION=$version" version.env; t
 fi
 printf 'CHATDEV_VERSION=%s\n' "$version" > version.env
 docker compose --env-file version.env config --quiet
+echo 'Starting container and waiting for health checks...'
 docker compose --env-file version.env up -d --remove-orphans --wait --wait-timeout 180
 docker compose --env-file version.env exec -T app python -c "import urllib.request,json; r=json.load(urllib.request.urlopen('http://127.0.0.1:8080/api/workflows')); assert isinstance(r['workflows'],list); print('Workflow API proxy OK')"
 echo 'Deployment health checks passed.'

@@ -62,6 +62,22 @@ bash -c "${!#}"
         self.assertEqual((self.remote / "VERSION").read_text().strip(), "test-release")
         self.assertFalse(list(self.remote.glob(".upload.*")))
         self.assertNotIn("test-$literal#key", result.stdout + result.stderr)
+        self.assertIn("SSH authenticated. Receiving image archive", result.stdout)
+        self.assertIn("Upload complete. Starting remote deployment", result.stdout)
+
+    def test_slow_upload_reports_progress(self):
+        # Simulate a slow receiver without credentials or network access.
+        self.executable("tar", '''if [[ "$1" == -xf ]]; then
+  : > "$4/images.tar.gz"
+  sleep 6
+fi
+PATH="${PATH#*:}"
+exec tar "$@"
+''')
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Received 0 / 0 MiB", result.stdout)
+        self.assertFalse(list(self.remote.glob(".upload.*")))
 
     def assert_no_upload(self, result):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

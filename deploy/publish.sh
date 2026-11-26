@@ -17,7 +17,7 @@ DEPLOY_PATH=${DEPLOY_PATH:-/opt/chatdev}
 [[ "$API_KEY" != sk-your-openai-api-key-here ]] || { echo 'Replace the example API_KEY'; exit 1; }
 for tool in docker ssh tar gzip git; do command -v "$tool" >/dev/null || { echo "Missing tool: $tool"; exit 1; }; done
 docker info >/dev/null
-ssh_options=(-p "$DEPLOY_PORT" -o ConnectTimeout=15)
+ssh_options=(-p "$DEPLOY_PORT" -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
 if [[ -n "${DEPLOY_SSH_KEY:-}" ]]; then
   identity=${DEPLOY_SSH_KEY/#\~/$HOME}
   [[ -f "$identity" ]] || { echo 'DEPLOY_SSH_KEY does not exist'; exit 1; }
@@ -55,10 +55,12 @@ for artifact in images.tar.gz VERSION compose.yaml deploy.sh; do
 done
 [[ "$(cat "$release/VERSION")" == "$version" ]] || { echo 'Build version mismatch; deployment cancelled.' >&2; exit 1; }
 gzip -t "$release/images.tar.gz" || { echo 'Invalid image archive; deployment cancelled.' >&2; exit 1; }
-echo '3/3 Uploading over SSH and deploying...'
+image_bytes=$(wc -c < "$release/images.tar.gz")
+echo "3/3 Uploading over SSH and deploying (image: $((image_bytes / 1048576)) MiB)..."
+echo 'After SSH authentication, transfer progress will appear every 5 seconds.'
 # Extract in a private staging directory; incomplete transfers do not overwrite config.
 tar -C "$release" -cf - images.tar.gz VERSION compose.yaml deploy.sh .env |
-  ssh "${ssh_options[@]}" "$target" "set -eu; umask 077; cd '$DEPLOY_PATH'; stage=\$(mktemp -d .upload.XXXXXX); trap 'rm -rf \"\$stage\"' EXIT; tar -xf - -C \"\$stage\"; for f in images.tar.gz VERSION compose.yaml deploy.sh .env; do test -f \"\$stage/\$f\"; done; cp \"\$stage/.env\" .env.next; chmod 600 .env.next; mv .env.next .env; mv \"\$stage/images.tar.gz\" \"\$stage/VERSION\" \"\$stage/compose.yaml\" \"\$stage/deploy.sh\" .; bash deploy.sh"
+  ssh "${ssh_options[@]}" "$target" "set -eu; umask 077; cd '$DEPLOY_PATH'; stage=\$(mktemp -d .upload.XXXXXX); watcher=; trap 'if [ -n \"\$watcher\" ]; then kill \"\$watcher\" 2>/dev/null || :; fi; rm -rf \"\$stage\"' EXIT; echo 'SSH authenticated. Receiving image archive...'; (while sleep 5; do if [ -f \"\$stage/images.tar.gz\" ]; then received=\$(wc -c < \"\$stage/images.tar.gz\"); echo \"Received \$((received / 1048576)) / $((image_bytes / 1048576)) MiB\"; else echo 'Receiving archive headers...'; fi; done) & watcher=\$!; tar -xf - -C \"\$stage\"; kill \"\$watcher\" 2>/dev/null || :; wait \"\$watcher\" 2>/dev/null || :; watcher=; echo 'Upload complete. Starting remote deployment...'; for f in images.tar.gz VERSION compose.yaml deploy.sh .env; do test -f \"\$stage/\$f\"; done; cp \"\$stage/.env\" .env.next; chmod 600 .env.next; mv .env.next .env; mv \"\$stage/images.tar.gz\" \"\$stage/VERSION\" \"\$stage/compose.yaml\" \"\$stage/deploy.sh\" .; bash deploy.sh"
 printf '\nDeployment complete. Access from your computer:\nssh -N -p %q ' "$DEPLOY_PORT"
 if [[ -n "${identity:-}" ]]; then printf -- '-i %q ' "$identity"; fi
 printf -- '-L 8080:127.0.0.1:8080 %q\n' "$target"
